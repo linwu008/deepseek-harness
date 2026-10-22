@@ -757,6 +757,45 @@ describe('removeLinkProjections', () => {
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version }))
   }
 
+  it('preserves runtime assets behind nested directory links while removing projection files and cycles', () => {
+    const home = tmp()
+    const profile = join(home, 'profiles', 'desktop')
+    const projection = join(profile, '.dsh-module-fallback')
+    const runtime = join(home, 'resources', 'runtime')
+    const skill = join(runtime, 'office-skills', 'office', 'SKILL.md')
+    mkdirSync(dirname(skill), { recursive: true })
+    writeFileSync(skill, 'bundled office skill\n')
+    packageAt(join(runtime, 'node_modules', '@scope', 'shared'), '@scope/shared', '1.0.0')
+    link(runtime, join(projection, 'node_modules', '@scope', 'runtime'))
+    link(projection, join(projection, 'cycle'))
+    link(join(home, 'missing-runtime'), join(projection, 'dangling'))
+    writeFileSync(join(projection, 'projection.json'), '{}\n')
+    const manifest = readFileSync(join(runtime, 'node_modules', '@scope', 'shared', 'package.json'))
+
+    removeLinkProjections(profile)
+
+    expect(lstatSync(projection, { throwIfNoEntry: false })).toBeUndefined()
+    expect(readFileSync(skill, 'utf8')).toBe('bundled office skill\n')
+    expect(readFileSync(join(runtime, 'node_modules', '@scope', 'shared', 'package.json'))).toEqual(manifest)
+  })
+
+  it.each([false, true])('unlinks a projection root with a missing target: %s', (missing) => {
+    const home = tmp()
+    const profile = join(home, 'profiles', 'desktop')
+    const projection = join(profile, '.dsh-module-fallback')
+    const runtime = join(home, 'resources', 'runtime')
+    if (!missing) {
+      mkdirSync(runtime, { recursive: true })
+      writeFileSync(join(runtime, 'sentinel'), 'preserved')
+    }
+    link(runtime, projection)
+
+    removeLinkProjections(profile)
+
+    expect(lstatSync(projection, { throwIfNoEntry: false })).toBeUndefined()
+    if (!missing) expect(readFileSync(join(runtime, 'sentinel'), 'utf8')).toBe('preserved')
+  })
+
   it('removes only the symlinks that point into .dsh-module-fallback and the directory itself', () => {
     const home = tmp()
     const profile = join(home, 'profiles', 'web')

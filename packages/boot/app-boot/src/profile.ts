@@ -22,7 +22,7 @@
  */
 
 import { createRequire } from 'node:module'
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 import { applyEntryPatches, type PatchOptions } from '@deepseek-ai/cordis-plugin-include'
@@ -287,17 +287,30 @@ const LINK_PROJECTION_DIR = '.dsh-module-fallback'
  * Remove the package projections a link-backend launch left in a profile.
  * Only symlinks under the profile's `node_modules` whose target lies inside
  * `<profile>/.dsh-module-fallback/node_modules` are unlinked, then that directory is removed;
+ * root and nested links are unlinked without visiting their targets, including dangling links.
  * pnpm-installed packages and every other symlink stay. A profile without the directory is untouched.
+ * Filesystem failures propagate; already removed projections are not restored.
  * @param dir - the profile directory.
  */
 export function removeLinkProjections(dir: string): void {
   const owned = join(dir, LINK_PROJECTION_DIR)
-  if (!existsSync(owned)) return
+  if (lstatSync(owned, { throwIfNoEntry: false }) === undefined) return
   const ownedModules = join(owned, 'node_modules')
   for (const link of symlinksUnder(join(dir, 'node_modules'))) {
     if (pointsInto(link, ownedModules)) unlinkSync(link)
   }
-  rmSync(owned, { recursive: true, force: true })
+  removeProjectionTree(owned)
+}
+
+/** Remove only projection entries; Electron's recursive rm can follow Windows junction targets. */
+function removeProjectionTree(path: string): void {
+  const entry = lstatSync(path)
+  if (entry.isSymbolicLink() || !entry.isDirectory()) {
+    unlinkSync(path)
+    return
+  }
+  for (const name of readdirSync(path)) removeProjectionTree(join(path, name))
+  rmdirSync(path)
 }
 
 /** Top-level and scoped entries under a node_modules directory that are symlinks or junctions. */
